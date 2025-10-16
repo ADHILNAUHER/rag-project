@@ -1,0 +1,9 @@
+.web
+*.py[cod]
+*.db
+__pycache__/
+assets
+.states
+requirements.txt
+.venv
+rxconfig.py

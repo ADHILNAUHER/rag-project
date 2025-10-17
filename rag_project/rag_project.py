@@ -7,14 +7,14 @@ def index() -> rx.Component:
     return rx.el.main(
         rx.el.div(
             rx.el.div(
-                rx.icon("bot-message-square", class_name="h-25 w-25 text-gray-400 mb-6"),
+                rx.icon("bot-message-square", class_name="h-25 w-25 text-[#4f3a69] mb-6"),
                 rx.el.h2(
                     "Welcome to your RAG assistant",
-                    class_name="text-2xl font-semibold text-gray-300",
+                    class_name="text-2xl font-semibold text-[#baa7d1]",
                 ),
                 rx.el.p(
                     "Upload documents and ask questions to get started.",
-                    class_name="text-gray-400 font-medium mt-2",
+                    class_name="text-[#baa7d1] font-medium mt-2",
                 ),
                 class_name="flex flex-col items-center justify-center text-center h-full",
             ),  

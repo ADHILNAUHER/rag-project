@@ -26,7 +26,7 @@ text_input = {
 
 send_button = {
     "padding": "0",
-    "backgroundColor": "#52306B",
+    "backgroundColor": "#E77AFF21",
     "color": "#200825",
     "border": "none",
     "borderRadius": "15px",

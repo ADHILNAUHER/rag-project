@@ -1,85 +1,39 @@
 import reflex as rx
-from rag_project.style import upload_button, text_input, send_button, action_bar_style
-
-
-class State(rx.State):
-    text: str = ""
-
-    def set_text(self, value: str):
-        self.text = value
-
-    def upload_file(self, files):
-        print("Uploaded files:", files)
-
-
-def action_bar() -> rx.Component:
-    return rx.box(
-        rx.hstack(
-            # Hidden file input
-            rx.input(
-                type="file",
-                id="file-upload",
-                multiple=False,
-                accept=".txt,.png,.jpg",
-                style={"display": "none"},
-                # on_change=State.upload_file,
-            ),
-            # Upload button
-            rx.button(
-                rx.icon("arrow-up"),
-                on_click=rx.call_script(
-                    """
-                    const input = document.getElementById('file-upload');
-                    input.click();
-                    input.onchange = async () => {
-                        const file = input.files[0];
-                        const formData = new FormData();
-                        formData.append('file', file);
-
-                        const response = await fetch('http://localhost:9000/upload', {
-                            method: 'POST',
-                            body: formData
-                        });
-
-                        const result = await response.json();
-                        console.log("Uploaded:", result);
-                        alert("Uploaded: " + result.filename);
-                    };
-                """
-                ),
-                style=upload_button,
-            ),
-            # Text input
-            rx.input(
-                placeholder="Type something...",
-                value=State.text,
-                on_change=State.set_text,
-                style=text_input,
-            ),
-            rx.button(
-                rx.icon("send-horizontal"),
-                style=send_button,
-            ),
-            spacing="3",
-            align="center",
-            width="min(95%, 860px)",
-            margin_x="auto",
-        ),
-        **action_bar_style
-    )
+from rag_project.chat import chat_input_area
 
 
 def index() -> rx.Component:
-    return rx.box(
-        rx.vstack(
-            action_bar(),
-            align="center",
+    """The main page displaying only the action bar UI."""
+    return rx.el.main(
+        rx.el.div(
+            rx.el.div(
+                rx.icon("bot-message-square", class_name="h-25 w-25 text-gray-400 mb-6"),
+                rx.el.h2(
+                    "Welcome to your RAG assistant",
+                    class_name="text-2xl font-semibold text-gray-300",
+                ),
+                rx.el.p(
+                    "Upload documents and ask questions to get started.",
+                    class_name="text-gray-400 font-medium mt-2",
+                ),
+                class_name="flex flex-col items-center justify-center text-center h-full",
+            ),  
+            chat_input_area(),
+            class_name="flex flex-col h-screen items-center justify-center",
         ),
-        width="100%",
-        height="100vh",
-        bg_color="#14101FF8",
+        class_name="h-screen w-full bg-[#14101F] text-white font-['Montserrat']",
     )
 
 
-app = rx.App()
-app.add_page(index)
+app = rx.App(
+    theme=rx.theme(appearance="light"),
+    head_components=[
+        rx.el.link(rel="preconnect", href="https://fonts.googleapis.com"),
+        rx.el.link(rel="preconnect", href="https://fonts.gstatic.com", crossorigin=""),
+        rx.el.link(
+            href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700&display=swap",
+            rel="stylesheet",
+        ),
+    ],
+)
+app.add_page(index, title="RAG UI Demo - Frontend Only")

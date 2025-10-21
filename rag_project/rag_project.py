@@ -1,4 +1,4 @@
-#rag_project.py
+# rag_project.py
 import reflex as rx
 from rag_project.chat import chat_input_area
 

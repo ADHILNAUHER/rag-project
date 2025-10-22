@@ -7,14 +7,13 @@ from fastapi.responses import Response
 from databases import Database
 
 # --- Directory for Retrieved Files ---
-# Create a directory to store files retrieved from the database
 RETRIEVED_FILES_DIR = "retrieved_files"
 os.makedirs(RETRIEVED_FILES_DIR, exist_ok=True)
 
 # --- Database Configuration ---
-# Replace with your actual PostgreSQL connection details
 DATABASE_URL = os.getenv(
-    "DATABASE_URL", "postgresql+asyncpg://postgres:pillsgap@localhost:5432/postgres"
+    "DATABASE_URL",
+    "postgresql+asyncpg://postgres:pillsgap@localhost:5432/postgres",
 )
 
 # SQLAlchemy setup
@@ -30,7 +29,7 @@ files_table = sqlalchemy.Table(
     sqlalchemy.Column("data", sqlalchemy.LargeBinary, nullable=False),
 )
 
-# Create an SQLAlchemy engine to create the table if it doesn't exist
+# Create an SQLAlchemy engine to create the table
 engine = sqlalchemy.create_engine(DATABASE_URL.replace("+asyncpg", ""))
 metadata.create_all(engine)
 
@@ -66,19 +65,53 @@ app.add_middleware(
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
-    Handles file uploads by reading the file content and storing it in the database.
+    Handles file uploads.
+    It will REPLACE any existing file in the database to ensure only one file is
+    stored at a time.
     """
     if not file:
         raise HTTPException(status_code=400, detail="No file provided")
+
     try:
+        # Read the new file's content and name
         content = await file.read()
-        query = files_table.insert().values(filename=file.filename, data=content)
-        file_id = await database.execute(query)
-        return {
-            "message": f"File '{file.filename}' uploaded successfully",
-            "file_id": file_id,
-            "filename": file.filename,
-        }
+        filename = file.filename
+
+        # --- NEW "REPLACE" LOGIC ---
+
+        # 1. Check if a file already exists in the table.
+        select_query = files_table.select().limit(1)
+        existing_file = await database.fetch_one(select_query)
+
+        message: str
+        file_id: int
+
+        if existing_file:
+            # 2. If a file exists, UPDATE it
+            print(f"Existing file found (ID: {existing_file['id']}). Replacing it...")
+
+            update_query = (
+                files_table.update()
+                .where(files_table.c.id == existing_file["id"])
+                .values(filename=filename, data=content)
+            )
+            await database.execute(update_query)
+
+            file_id = existing_file["id"]
+            message = f"File '{filename}' successfully replaced the previous file."
+
+        else:
+            # 3. If no file exists, INSERT a new one
+            print("No existing file found. Creating new record...")
+
+            insert_query = files_table.insert().values(filename=filename, data=content)
+            file_id = await database.execute(insert_query)
+
+            message = f"File '{filename}' successfully uploaded."
+
+        # 4. Return the response
+        return {"message": message, "file_id": file_id, "filename": filename}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
@@ -87,6 +120,7 @@ async def upload_file(file: UploadFile = File(...)):
 async def get_file(file_id: int):
     """
     Retrieves a file from the database by its ID and returns it for browser download.
+    (Note: With the new logic, this will almost always be the same single file).
     """
     try:
         query = files_table.select().where(files_table.c.id == file_id)
@@ -104,42 +138,31 @@ async def get_file(file_id: int):
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
-# --- NEW ENDPOINT TO RETRIEVE FILE TO SERVER DISK ---
 @app.get("/retrieve/{file_id}")
 async def retrieve_file(file_id: int):
     """
     Retrieves a file from the database and saves it to the server's local filesystem.
     """
     try:
-        # Step 1: Query the database to find the file by its ID
         query = files_table.select().where(files_table.c.id == file_id)
         result = await database.fetch_one(query)
-
         if not result:
             raise HTTPException(status_code=404, detail="File not found in database")
 
-        # Step 2: Extract filename and binary data
         filename = result["filename"]
         file_data = result["data"]
-
-        # Step 3: Define the full path to save the file
         save_path = os.path.join(RETRIEVED_FILES_DIR, filename)
 
-        # Step 4: Write the binary data to a new file on the server
-        # 'wb' mode is crucial: it writes in binary mode, ensuring data integrity.
         with open(save_path, "wb") as f:
             f.write(file_data)
 
         print(f"File '{filename}' successfully retrieved and saved to '{save_path}'")
-
-        # Step 5: Return a success response
         return {
             "message": "File retrieved from database and saved locally",
             "file_id": file_id,
             "filename": filename,
             "saved_path": save_path,
         }
-
     except Exception as e:
         raise HTTPException(
             status_code=500, detail=f"An error occurred during retrieval: {str(e)}"

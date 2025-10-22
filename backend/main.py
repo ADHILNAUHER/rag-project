@@ -167,3 +167,24 @@ async def retrieve_file(file_id: int):
         raise HTTPException(
             status_code=500, detail=f"An error occurred during retrieval: {str(e)}"
         )
+
+
+@app.delete("/file/{file_id}")
+async def delete_file(file_id: int):
+    """
+    Deletes a file from the database by its ID.
+    """
+    try:
+        query = files_table.select().where(files_table.c.id == file_id)
+        result = await database.fetch_one(query)
+        if not result:
+            raise HTTPException(status_code=404, detail="File not found")
+
+        delete_query = files_table.delete().where(files_table.c.id == file_id)
+        await database.execute(delete_query)
+
+        return {
+            "message": f"File '{result['filename']}' successfully deleted from database"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")

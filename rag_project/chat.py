@@ -1,5 +1,57 @@
 import reflex as rx
-from rag_project.style import input_box, upload_button, send_buttom, action_bar
+from rag_project.state import RAGState
+from rag_project.file_card import uploaded_file_card
+from rag_project.style import *
+
+
+def chat_input_area() -> rx.Component:
+    """The chat input area with file upload and send button."""
+    return rx.el.div(
+        rx.cond(
+            RAGState.uploaded_files.length() > 0,
+            rx.el.div(
+                rx.foreach(RAGState.uploaded_files, uploaded_file_card),
+                class_name="flex flex-wrap items-center gap-2 p-2",
+            ),
+        ),
+        rx.el.form(
+            rx.el.div(
+                rx.el.input(
+                    name="query",
+                    placeholder="Type something...",
+                    class_name=input_box,
+                ),
+                class_name="w-full",
+            ),
+            rx.el.div(
+                rx.upload.root(
+                    rx.el.button(
+                        rx.icon("paperclip", class_name="h-4 w-4"),
+                        "Attach",
+                        type="button",
+                        class_name=upload_button,
+                    ),
+                    id="file_upload",
+                    multiple=False,
+                    on_drop=RAGState.handle_upload(
+                        rx.upload_files(upload_id="file_upload")
+                    ),
+                    class_name="flex",
+                ),
+                rx.el.button(
+                    rx.icon("arrow-up", class_name="h-4 w-4"),
+                    type="submit",
+                    disabled=RAGState.is_processing,
+                    class_name=send_buttom,
+                ),
+                class_name="flex items-center justify-between w-full mt-2",
+            ),
+            on_submit=RAGState.submit_query,
+            reset_on_submit=True,
+            class_name="w-full",
+        ),
+        class_name=action_bar,
+    )
 
 
 def chat_area() -> rx.Component:
@@ -16,64 +68,4 @@ def chat_area() -> rx.Component:
             ),
             class_name="flex flex-col items-center justify-center text-center h-full",
         ),
-    )
-
-
-def chat_input_area() -> rx.Component:
-    return rx.el.div(
-        rx.el.div(
-            rx.el.div(
-                rx.el.input(
-                    placeholder="Type something...",
-                    class_name=input_box,
-                ),
-                class_name="w-full",
-            ),
-            rx.el.div(
-                rx.button(
-                    rx.icon("paperclip", class_name="h-4 w-4"),
-                    "Attach",
-                    class_name=upload_button,
-                    on_click=rx.call_script(
-                        """
-                        const input = document.createElement('input');
-                        input.type = 'file';
-                        input.accept = '.pdf, .txt';
-
-                        input.onchange = () => {
-                            const file = input.files[0];
-                            if (!file) return;
-
-                            const formData = new FormData();
-                            formData.append('file', file);
-
-                            fetch('http://localhost:9000/upload', {
-                                method: 'POST',
-                                body: formData
-                            })
-                            .then(response => response.json())
-                            .then(data => {
-                                alert('Upload successful: ' + data.filename);
-                            })
-                            .catch(error => {
-                                console.error('Upload failed:', error);
-                                alert('Upload failed');
-                            });
-                        };
-
-                        input.click();
-                    """
-                    ),
-                ),
-                rx.el.button(
-                    rx.icon("arrow-up", class_name="h-4 w-4"),
-                    type="button",
-                    on_click=rx.toast("This is a UI demonstration", duration=3000),
-                    class_name=send_buttom,
-                ),
-                class_name="flex items-center justify-between w-full mt-2",
-            ),
-            class_name="w-full",
-        ),
-        class_name=action_bar,
     )

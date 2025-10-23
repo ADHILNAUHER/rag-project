@@ -33,6 +33,12 @@ def chat_input_area() -> rx.Component:
                     ),
                     id="file_upload",
                     multiple=False,
+                    accept={
+                        "pdf": [".pdf"],
+                        "plain": [".txt"],
+                        "msword": [".doc"],
+                        "image": [".png"],
+                    },
                     on_drop=RAGState.handle_upload(
                         rx.upload_files(upload_id="file_upload")
                     ),

@@ -5,6 +5,14 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from databases import Database
+from dotenv import load_dotenv
+from pathlib import Path
+
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
+
+
+from backend.ingestion import ingest_document, delete_vectors
 
 # --- Directory for Retrieved Files ---
 RETRIEVED_FILES_DIR = "retrieved_files"
@@ -30,8 +38,23 @@ files_table = sqlalchemy.Table(
 )
 
 # Create an SQLAlchemy engine to create the table
-engine = sqlalchemy.create_engine(DATABASE_URL.replace("+asyncpg", ""))
-metadata.create_all(engine)
+# Note: Use the non-async driver for table creation
+engine_url = DATABASE_URL.replace("+asyncpg", "")
+if "postgresql://" in engine_url:
+    # psycopg2 is the default sync driver
+    pass
+elif "mysql" in engine_url:
+    engine_url = engine_url.replace("+asyncmy", "+pymysql")
+elif "sqlite" in engine_url:
+    engine_url = engine_url.replace("+aiosqlite", "")
+
+try:
+    engine = sqlalchemy.create_engine(engine_url)
+    metadata.create_all(engine)
+    print("Database tables checked/created.")
+except Exception as e:
+    print(f"Error creating database engine or tables: {e}")
+    print("Please ensure your database is running and DATABASE_URL is correct.")
 
 
 # --- Lifespan Event Handler ---
@@ -41,11 +64,15 @@ async def lifespan(app: FastAPI):
     Handles startup and shutdown events for the application.
     Connects to the database on startup and disconnects on shutdown.
     """
-    await database.connect()
-    print("Database connection established.")
+    try:
+        await database.connect()
+        print("Database connection established.")
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
     yield
-    await database.disconnect()
-    print("Database connection closed.")
+    if database.is_connected:
+        await database.disconnect()
+        print("Database connection closed.")
 
 
 # --- FastAPI Application ---
@@ -66,18 +93,17 @@ app.add_middleware(
 async def upload_file(file: UploadFile = File(...)):
     """
     Handles file uploads.
-    It will REPLACE any existing file in the database to ensure only one file is
-    stored at a time.
+    1. Replaces any existing file in the PostgreSQL database.
+    2. Deletes the old file's vectors from Pinecone.
+    3. Ingests the new file's vectors into Pinecone.
     """
     if not file:
         raise HTTPException(status_code=400, detail="No file provided")
 
     try:
-        # Read the new file's content and name
+        # Read the new file's content and name ONCE
         content = await file.read()
         filename = file.filename
-
-        # --- NEW "REPLACE" LOGIC ---
 
         # 1. Check if a file already exists in the table.
         select_query = files_table.select().limit(1)
@@ -87,54 +113,59 @@ async def upload_file(file: UploadFile = File(...)):
         file_id: int
 
         if existing_file:
-            # 2. If a file exists, UPDATE it
-            print(f"Existing file found (ID: {existing_file['id']}). Replacing it...")
+            # 2a. If a file exists, DELETE its old vectors from Pinecone
+            print(
+                f"Existing file found (ID: {existing_file['id']}). Deleting old vectors..."
+            )
+            try:
+                await delete_vectors(file_id=str(existing_file["id"]))
+            except Exception as e:
+                print(f"Warning: Could not delete old vectors: {e}")
+                # Continue anyway, as we are replacing the file
 
+            # 2b. UPDATE the file in PostgreSQL
+            print(f"Updating file in database...")
             update_query = (
                 files_table.update()
                 .where(files_table.c.id == existing_file["id"])
                 .values(filename=filename, data=content)
             )
             await database.execute(update_query)
-
             file_id = existing_file["id"]
             message = f"File '{filename}' successfully replaced the previous file."
 
         else:
-            # 3. If no file exists, INSERT a new one
+            # 3. If no file exists, INSERT a new one into PostgreSQL
             print("No existing file found. Creating new record...")
-
             insert_query = files_table.insert().values(filename=filename, data=content)
             file_id = await database.execute(insert_query)
-
             message = f"File '{filename}' successfully uploaded."
 
-        # 4. Return the response
+        # 4. INGEST the new file's vectors into Pinecone
+        print(f"Starting vector ingestion for file_id: {file_id}...")
+        try:
+            await ingest_document(
+                file_content=content,  # <-- Use the "pass-the-bytes" method
+                file_id=str(file_id),
+                filename=filename,
+            )
+            print(f"Successfully ingested vectors for file_id: {file_id}")
+        except Exception as e:
+            # If ingestion fails, the file is in the DB but Pinecone is out of sync.
+            # This is a critical error.
+            raise HTTPException(
+                status_code=500,
+                detail=f"File saved to DB, but Pinecone ingestion failed: {str(e)}",
+            )
+
+        # 5. Return the success response
         return {"message": message, "file_id": file_id, "filename": filename}
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
-
-
-@app.get("/file/{file_id}")
-async def get_file(file_id: int):
-    """
-    Retrieves a file from the database by its ID and returns it for browser download.
-    (Note: With the new logic, this will almost always be the same single file).
-    """
-    try:
-        query = files_table.select().where(files_table.c.id == file_id)
-        result = await database.fetch_one(query)
-        if not result:
-            raise HTTPException(status_code=404, detail="File not found")
-        return Response(
-            content=result["data"],
-            media_type="application/octet-stream",
-            headers={
-                "Content-Disposition": f"attachment; filename={result['filename']}"
-            },
-        )
-    except Exception as e:
+        # Catch any other unexpected errors
+        print(f"An error occurred during upload: {e}")
+        if isinstance(e, HTTPException):
+            raise  # Re-raise HTTPException if it's one we threw
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
@@ -142,6 +173,7 @@ async def get_file(file_id: int):
 async def retrieve_file(file_id: int):
     """
     Retrieves a file from the database and saves it to the server's local filesystem.
+    (Kept for your file quality checks)
     """
     try:
         query = files_table.select().where(files_table.c.id == file_id)
@@ -172,19 +204,55 @@ async def retrieve_file(file_id: int):
 @app.delete("/file/{file_id}")
 async def delete_file(file_id: int):
     """
-    Deletes a file from the database by its ID.
+    Deletes a file from the PostgreSQL database AND its associated vectors
+    from Pinecone.
     """
     try:
+        # 1. Check if file exists in PostgreSQL
         query = files_table.select().where(files_table.c.id == file_id)
         result = await database.fetch_one(query)
         if not result:
-            raise HTTPException(status_code=404, detail="File not found")
+            raise HTTPException(status_code=404, detail="File not found in database")
 
+        # 2. Delete file from PostgreSQL
+        print(f"Deleting file {file_id} from PostgreSQL...")
         delete_query = files_table.delete().where(files_table.c.id == file_id)
         await database.execute(delete_query)
+        print("Deleted from PostgreSQL.")
+
+        # 3. Delete vectors from Pinecone
+        print(f"Deleting vectors for file_id {file_id} from Pinecone...")
+        await delete_vectors(file_id=str(file_id))
+        print("Deleted vectors from Pinecone.")
 
         return {
-            "message": f"File '{result['filename']}' successfully deleted from database"
+            "message": f"File '{result['filename']}' and its vectors successfully deleted"
         }
     except Exception as e:
+        print(f"An error occurred during deletion: {e}")
+        if isinstance(e, HTTPException):
+            raise
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
+@app.get("/current-file")
+async def get_current_file():
+    """
+    Returns the filename of the single file currently in the database.
+    This is for the Reflex UI to fetch on page load.
+    """
+    try:
+        # Select the first (and only) file from the table
+        query = files_table.select().limit(1)
+        result = await database.fetch_one(query)
+
+        if result:
+            # A file exists, return its name and ID
+            return {"filename": result["filename"], "file_id": result["id"]}
+        else:
+            # No file in the database
+            return {"filename": None, "file_id": None}
+
+    except Exception as e:
+        print(f"Error fetching current file: {e}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")

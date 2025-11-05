@@ -10,8 +10,7 @@ from langchain_community.document_loaders import PyPDFLoader, TextLoader, Docx2t
 from dotenv import load_dotenv
 from pathlib import Path
 
-env_path = Path(__file__).parent / ".env"
-load_dotenv(dotenv_path=env_path)
+load_dotenv()
 # --- Environment Variables ---
 # We read the names here, but we don't USE them until inside a function
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")

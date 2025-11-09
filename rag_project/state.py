@@ -1,19 +1,19 @@
-#state.py 
 import reflex as rx
-from typing import TypedDict
+from typing import TypedDict, Optional
 import asyncio
 import logging
 import httpx
 
 
-class Message(TypedDict):
-    role: str
-    content: str
-
-
 class UploadedFile(TypedDict):
     filename: str
     file_id: int
+
+
+class Message(TypedDict):
+    role: str
+    content: str
+    attached_files: list[UploadedFile] | None
 
 
 class RAGState(rx.State):
@@ -76,6 +76,13 @@ class RAGState(rx.State):
                 self.uploaded_files = [
                     f for f in self.uploaded_files if f["file_id"] != file_id
                 ]
+                for i in range(len(self.messages)):
+                    if self.messages[i]["attached_files"]:
+                        self.messages[i]["attached_files"] = [
+                            f
+                            for f in self.messages[i]["attached_files"]
+                            if f["file_id"] != file_id
+                        ]
             yield rx.toast.success(
                 response_data.get("message", f"Removed file: {filename_to_remove}")
             )
@@ -95,34 +102,45 @@ class RAGState(rx.State):
 
     @rx.event
     def submit_query(self, form_data: dict):
-        """Handle the submission of a user query to the backend."""
+        """Handle the submission of a user query."""
         query = form_data.get("query", "").strip()
-        if not query:
+        if not query and (not self.uploaded_files):
             return rx.toast.warning("Query cannot be empty.")
-        if not self.uploaded_files:
-            return rx.toast.warning("Please upload a file before asking a question.")
-        self.messages.append({"role": "user", "content": query})
+        attached_files = self.uploaded_files
+        self.uploaded_files = []
+        self.messages.append(
+            {
+                "role": "user",
+                "content": query or "Sent files",
+                "attached_files": attached_files if attached_files else None,
+            }
+        )
         self.is_processing = True
         yield RAGState.get_backend_response
-        yield rx.scroll_to("chat-display")
 
     @rx.event(background=True)
     async def get_backend_response(self):
         """Get a response from the backend RAG model."""
         async with self:
-            query = self.messages[-1]["content"]
-            file_id = self.uploaded_files[0]["file_id"] if self.uploaded_files else None
+            last_message = self.messages[-1]
+            query = last_message["content"]
+            file_id = (
+                last_message["attached_files"][0]["file_id"]
+                if last_message["attached_files"]
+                else None
+            )
             payload = {"query": query, "file_id": file_id}
-        if not file_id:
-            async with self:
-                self.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "An error occurred: No file has been uploaded.",
-                    }
-                )
-                self.is_processing = False
-            return
+        # if not file_id:
+        #     async with self:
+        #         self.messages.append(
+        #             {
+        #                 "role": "assistant",
+        #                 "content": "An error occurred: No file was attached to the query.",
+        #                 "attached_files": None,
+        #             }
+        #         )
+        #         self.is_processing = False
+        #     return
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 response = await client.post(
@@ -134,7 +152,13 @@ class RAGState(rx.State):
                     "response", "Sorry, I could not process that."
                 )
             async with self:
-                self.messages.append({"role": "assistant", "content": response_text})
+                self.messages.append(
+                    {
+                        "role": "assistant",
+                        "content": response_text,
+                        "attached_files": None,
+                    }
+                )
         except httpx.RequestError as e:
             logging.exception(f"Backend connection error: {e}")
             async with self:
@@ -142,6 +166,7 @@ class RAGState(rx.State):
                     {
                         "role": "assistant",
                         "content": "Error: Could not connect to the backend. Please ensure it's running.",
+                        "attached_files": None,
                     }
                 )
         except Exception as e:
@@ -151,6 +176,7 @@ class RAGState(rx.State):
                     {
                         "role": "assistant",
                         "content": f"An unexpected error occurred: {str(e)}",
+                        "attached_files": None,
                     }
                 )
         finally:

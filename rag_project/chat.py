@@ -14,6 +14,16 @@ def message_bubble(message: Message, index: int) -> rx.Component:
     text_bg = rx.cond(is_user, "bg-[#6F3F7A]", "bg-[#4f3a69]")
 
     def render_message_content() -> rx.Component:
+
+        # Conditionally render text as plain paragraph or as Markdown
+        message_text_component = rx.cond(
+            is_user,
+            # User messages are plain text
+            rx.el.p(message["content"], class_name="text-white/90"),
+            # Assistant messages are rendered as Markdown
+            rx.markdown(message["content"], class_name="text-white/90 pt-0 pb-0"),
+        )
+
         return rx.el.div(
             rx.cond(
                 message["attached_files"],
@@ -21,15 +31,18 @@ def message_bubble(message: Message, index: int) -> rx.Component:
                     rx.foreach(
                         message["attached_files"],
                         lambda file_info: uploaded_file_card(
-                            file_info=file_info, #key=file_info["file_id"]
+                            file_info=file_info,  # key=file_info["file_id"]
                         ),
                     ),
                     class_name="flex flex-wrap items-center gap-2 p-2 mb-2",
                 ),
             ),
-            rx.el.p(message["content"], class_name="text-white/90"),
+            # This is the only part that changed:
+            message_text_component,
             class_name=rx.cond(
-                is_user, "p-3 rounded-2xl bg-[#6F3F7A]", "p-3 rounded-2xl bg-[#4f3a69]"
+                is_user,
+                "p-3 rounded-2xl bg-[#6F3F7A]",
+                "p-3 rounded-2xl bg-transparent",
             ),
         )
 

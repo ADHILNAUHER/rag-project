@@ -1,12 +1,16 @@
 import os
 import sqlalchemy
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from databases import Database
 from dotenv import load_dotenv
 from pathlib import Path
+from pydantic import BaseModel
+from typing import Optional
+from backend.ingestion import ingest_document, delete_vectors
+from backend.retreival import get_answer
 
 load_dotenv()
 
@@ -241,7 +245,6 @@ async def get_current_file():
     This is for the Reflex UI to fetch on page load.
     """
     try:
-        # Select the first (and only) file from the table
         query = files_table.select().limit(1)
         result = await database.fetch_one(query)
 
@@ -254,4 +257,28 @@ async def get_current_file():
 
     except Exception as e:
         print(f"Error fetching current file: {e}")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
+
+
+class QueryRequest(BaseModel):
+    query: str
+    file_id: Optional[int] = None
+
+
+@app.post("/process-query")
+async def process_query(request: QueryRequest = Body(...)):
+    """
+    Receives a query and file_id from the frontend,
+    calls the RAG pipeline, and returns the answer.
+    """
+    try:
+        print(f"Processing query: '{request.query}' for file_id: {request.file_id}")
+        file_id_str = str(request.file_id) if request.file_id is not None else None
+        result = get_answer(query=request.query, file_id=file_id_str)
+        print(f"Generated answer: {result.get('response')[:50]}...")
+        return result
+    except Exception as e:
+        print(f"Error processing query: {e}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")

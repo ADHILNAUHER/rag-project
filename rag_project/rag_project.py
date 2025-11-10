@@ -12,7 +12,7 @@ def index() -> rx.Component:
 
 
 app = rx.App(
-    theme=rx.theme(appearance="dark"),
+    theme=rx.theme(appearance="dark", accent_color="pink"),
     head_components=[
         rx.el.link(rel="preconnect", href="https://fonts.googleapis.com"),
         rx.el.link(rel="preconnect", href="https://fonts.gstatic.com", cross_origin=""),

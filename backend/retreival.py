@@ -34,17 +34,15 @@ client = InferenceClient(
 def _get_llm_chain():
     """
     Creates a custom LangChain runnable (a "Lambda") that
-    calls the Hugging Face InferenceClient directly.
+    calls the Hugging Face InferenceClient and *streams* the response.
     """
 
-    def invoke_llm(prompt_value):
+    def stream_llm(prompt_value):
         """
         Takes the output from the prompt template (a ChatPromptValue),
-        formats it for the InferenceClient, and calls the API.
+        formats it, and *yields* tokens from the InferenceClient.
         """
-
-        # 1. Convert LangChain messages to the dict list format
-        # that client.chat_completion expects.
+        # 1. Convert LangChain messages to the dict list
         messages = []
         for msg in prompt_value.to_messages():
             if isinstance(msg, SystemMessage):
@@ -55,25 +53,28 @@ def _get_llm_chain():
                 messages.append({"role": "assistant", "content": msg.content})
 
         try:
-            # 2. Call the client, just like in your state.py
-            # We set stream=False because this is a backend request.
-            response = client.chat_completion(
+            # 2. Call the client with stream=True
+            stream = client.chat_completion(
                 messages=messages,
                 max_tokens=550,
-                # stop_sequences=["<|eot_id|>"],
-                stream=False,
+                stop=["<|eot_id|>"],  # <-- Good to re-enable this
+                stream=True,
             )
 
-            # 3. Extract the text response
-            return response.choices[0].message.content
+            # 3. Yield each token as it arrives
+            print("\n--- [DEBUG] Streaming response from LLM... ---")
+            for token in stream:
+                if token.choices and token.choices[0].delta.content:
+                    chunk = token.choices[0].delta.content
+                    yield chunk
+            print("\n--- [DEBUG] Stream finished. ---")
 
         except Exception as e:
-            print(f"Error calling Hugging Face client: {e}")
-            return "Sorry, I ran into an error trying to generate a response."
+            print(f"\nError calling Hugging Face client: {e}")
+            yield "Sorry, I ran into an error trying to generate a response."
 
-    # 4. Wrap our custom function in a RunnableLambda
-    # This makes it a valid part of any LCEL chain.
-    return RunnableLambda(invoke_llm)
+    # 4. Wrap the streaming generator in a RunnableLambda
+    return RunnableLambda(stream_llm)
 
 
 def _get_retrieval_chain(file_id: Optional[str] = None):
@@ -156,14 +157,9 @@ Question:
     return rag_chain
 
 
-def get_answer(query: str, file_id: Optional[str] = None) -> Dict:
+def get_streaming_answer(query: str, file_id: Optional[str] = None):
     """
-    Given a query and an optional file_id, retrieve context and generate an answer.
+    Given a query and file_id, returns a *generator* that yields the RAG answer.
     """
     chain = _get_retrieval_chain(file_id=file_id)
-    answer = chain.invoke(query)
-
-    # Final cleanup just in case
-    clean_answer = answer.strip().replace("<|eot_id|>", "").strip()
-
-    return {"response": clean_answer, "sources": []}
+    return chain.stream(query)

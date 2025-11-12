@@ -130,55 +130,44 @@ class RAGState(rx.State):
                 else None
             )
             payload = {"query": query, "file_id": file_id}
-        # if not file_id:
-        #     async with self:
-        #         self.messages.append(
-        #             {
-        #                 "role": "assistant",
-        #                 "content": "An error occurred: No file was attached to the query.",
-        #                 "attached_files": None,
-        #             }
-        #         )
-        #         self.is_processing = False
-        #     return
+
+        async with self:
+            self.messages.append(
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "attached_files": None,
+                }
+            )
+
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(
-                    "http://localhost:9000/process-query", json=payload
-                )
-                response.raise_for_status()
-                response_data = response.json()
-                response_text = response_data.get(
-                    "response", "Sorry, I could not process that."
-                )
-            async with self:
-                self.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": response_text,
-                        "attached_files": None,
-                    }
-                )
+            async with httpx.AsyncClient(timeout=None) as client:
+                async with client.stream(
+                    "POST", "http://localhost:9000/process-query", json=payload
+                ) as response:
+
+                    if response.status_code != 200:
+                        async with self:
+                            self.messages[-1][
+                                "content"
+                            ] = f"Error: {response.status_code} - Could not get response."
+                        return  # Stop
+
+                    async for chunk in response.aiter_text():
+                        if chunk:
+                            async with self:
+                                self.messages[-1]["content"] += chunk
+
         except httpx.RequestError as e:
             logging.exception(f"Backend connection error: {e}")
             async with self:
-                self.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": "Error: Could not connect to the backend. Please ensure it's running.",
-                        "attached_files": None,
-                    }
-                )
+                self.messages[-1][
+                    "content"
+                ] = "Error: Could not connect to the backend."
         except Exception as e:
             logging.exception(f"An error occurred while getting response: {e}")
             async with self:
-                self.messages.append(
-                    {
-                        "role": "assistant",
-                        "content": f"An unexpected error occurred: {str(e)}",
-                        "attached_files": None,
-                    }
-                )
+                self.messages[-1]["content"] = f"An unexpected error occurred: {str(e)}"
         finally:
             async with self:
                 self.is_processing = False

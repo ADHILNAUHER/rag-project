@@ -53,18 +53,31 @@ def message_bubble(message: Message, index: int) -> rx.Component:
             class_name="flex items-start gap-3 justify-end w-[50%]",
         )
 
-    def assistant_message() -> rx.Component:
+    def assistant_message(index: int) -> rx.Component:
+
+        # --- 2. CREATE A CONDITIONAL CLASS FOR THE ICON ---
+        icon_class = rx.cond(
+            # If it's the last message AND we are still processing...
+            (RAGState.is_processing) & (index == (RAGState.messages.length() - 1)),
+            # ...then blink.
+            f"{icon_style} p-1.5 bg-[#4f3a69] text-white animate-pulse",
+            # ...otherwise, be static.
+            f"{icon_style} p-1.5 bg-[#4f3a69] text-white",
+        )
+
         return rx.el.div(
+            # --- 3. USE THE CONDITIONAL CLASS ---
             rx.icon(
                 "bot-message-square",
-                class_name=f"{icon_style} p-1.5 bg-[#4f3a69] text-white",
+                class_name=icon_class,
             ),
             render_message_content(),
             class_name="flex items-start gap-3",
         )
 
     return rx.el.div(
-        rx.cond(is_user, user_message(), assistant_message()), class_name=bubble_style
+        rx.cond(is_user, user_message(), assistant_message(index=index)),
+        class_name=bubble_style,
     )
 
 
@@ -143,16 +156,16 @@ def chat_area() -> rx.Component:
             ),
             rx.el.div(
                 rx.foreach(RAGState.messages, message_bubble),
-                rx.cond(
-                    RAGState.is_processing,
-                    rx.el.div(
-                        rx.icon(
-                            "bot-message-square",
-                            class_name="h-8 w-8 rounded-full p-1.5 bg-[#4f3a69] text-white animate-pulse",
-                        ),
-                        class_name="flex items-start gap-3",
-                    ),
-                ),
+                # rx.cond(
+                #     RAGState.is_processing,
+                #     rx.el.div(
+                #         rx.icon(
+                #             "bot-message-square",
+                #             class_name="h-8 w-8 rounded-full p-1.5 bg-[#4f3a69] text-white animate-pulse",
+                #         ),
+                #         class_name="flex items-start gap-3",
+                #     ),
+                # ),
                 padding_bottom="7.2rem",
                 class_name="w-full max-w-4xl space-y-4 p-4",
             ),

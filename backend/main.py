@@ -3,14 +3,14 @@ import sqlalchemy
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from databases import Database
 from dotenv import load_dotenv
 from pathlib import Path
 from pydantic import BaseModel
 from typing import Optional
 from backend.ingestion import ingest_document, delete_vectors
-from backend.retreival import get_answer
+from backend.retreival import get_streaming_answer
 
 load_dotenv()
 
@@ -269,14 +269,20 @@ class QueryRequest(BaseModel):
 async def process_query(request: QueryRequest = Body(...)):
     """
     Receives a query and file_id from the frontend,
-    calls the RAG pipeline, and returns the answer.
+    calls the RAG pipeline, and *streams* the response.
     """
     try:
         print(f"Processing query: '{request.query}' for file_id: {request.file_id}")
         file_id_str = str(request.file_id) if request.file_id is not None else None
-        result = get_answer(query=request.query, file_id=file_id_str)
-        print(f"Generated answer: {result.get('response')[:50]}...")
-        return result
+
+        # 1. Get the generator from our retrieval logic
+        answer_generator = get_streaming_answer(
+            query=request.query, file_id=file_id_str
+        )
+
+        # 2. Return a StreamingResponse that yields from the generator
+        return StreamingResponse(answer_generator, media_type="text/event-stream")
+
     except Exception as e:
         print(f"Error processing query: {e}")
         import traceback

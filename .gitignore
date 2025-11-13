@@ -10,3 +10,4 @@ rxconfig.py
 temp.txt
 .env
 temp.py
+models/

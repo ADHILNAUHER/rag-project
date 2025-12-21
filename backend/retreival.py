@@ -2,7 +2,6 @@ import os
 from typing import Dict, Optional, List
 from dotenv import load_dotenv
 
-# --- NEW/MODIFIED IMPORTS ---
 from huggingface_hub import InferenceClient
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from langchain.prompts import (
@@ -13,18 +12,14 @@ from langchain.prompts import (
 from langchain_core.messages import SystemMessage, HumanMessage, AIMessage
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 
-# --- END NEW/MODIFIED IMPORTS ---
 
 from backend.ingestion import _get_vectorstore
 from langchain_core.documents import Document
 from pathlib import Path
 
-# Ensure .env variables are loaded
 load_dotenv()
 
-# --- NEW: Initialize the client, just like in your state.py ---
-# Note: Ensure your .env file has HUGGINGFACEHUB_API_TOKEN
-# (or HUGGINGFACE_API_TOKEN as seen in your state.py)
+
 client = InferenceClient(
     model="meta-llama/Meta-Llama-3.1-8B-Instruct",
     token=os.getenv("HUGGINGFACEHUB_API_TOKEN"),
@@ -42,7 +37,6 @@ def _get_llm_chain():
         Takes the output from the prompt template (a ChatPromptValue),
         formats it, and *yields* tokens from the InferenceClient.
         """
-        # 1. Convert LangChain messages to the dict list
         messages = []
         for msg in prompt_value.to_messages():
             if isinstance(msg, SystemMessage):
@@ -53,15 +47,13 @@ def _get_llm_chain():
                 messages.append({"role": "assistant", "content": msg.content})
 
         try:
-            # 2. Call the client with stream=True
             stream = client.chat_completion(
                 messages=messages,
                 max_tokens=550,
-                stop=["<|eot_id|>"],  # <-- Good to re-enable this
+                stop=["<|eot_id|>"],
                 stream=True,
             )
 
-            # 3. Yield each token as it arrives
             print("\n--- [DEBUG] Streaming response from LLM... ---")
             for token in stream:
                 if token.choices and token.choices[0].delta.content:
@@ -73,7 +65,6 @@ def _get_llm_chain():
             print(f"\nError calling Hugging Face client: {e}")
             yield "Sorry, I ran into an error trying to generate a response."
 
-    # 4. Wrap the streaming generator in a RunnableLambda
     return RunnableLambda(stream_llm)
 
 
@@ -93,10 +84,6 @@ def _get_retrieval_chain(file_id: Optional[str] = None):
     retriever = vectorstore.as_retriever(
         search_type="similarity", search_kwargs=search_kwargs
     )
-
-    # --- (THIS IS STILL 100% CORRECT) ---
-    # We still need the Llama 3 Chat Template to format the
-    # messages *before* they go to our custom LLM function.
 
     system_template = """<|begin_of_text|><|start_header_id|>system<|end_header_id|>
 You are a helpful assistant. Answer the user's question based on the following context, and also from your own knowledge.
@@ -127,9 +114,7 @@ Question:
             HumanMessagePromptTemplate.from_template(human_template),
         ]
     )
-    # --- END (STILL CORRECT) ---
 
-    # Get our new custom LLM chain
     llm_chain = _get_llm_chain()
 
     def format_docs(docs: list) -> str:

@@ -17,21 +17,17 @@ load_dotenv()
 
 from backend.ingestion import ingest_document, delete_vectors
 
-# --- Directory for Retrieved Files ---
 RETRIEVED_FILES_DIR = "retrieved_files"
 os.makedirs(RETRIEVED_FILES_DIR, exist_ok=True)
 
-# --- Database Configuration ---
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
     "postgresql+asyncpg://postgres:pillsgap@localhost:5432/postgres",
 )
 
-# SQLAlchemy setup
 database = Database(DATABASE_URL)
 metadata = sqlalchemy.MetaData()
 
-# Define the table schema for storing files
 files_table = sqlalchemy.Table(
     "files",
     metadata,
@@ -40,11 +36,9 @@ files_table = sqlalchemy.Table(
     sqlalchemy.Column("data", sqlalchemy.LargeBinary, nullable=False),
 )
 
-# Create an SQLAlchemy engine to create the table
-# Note: Use the non-async driver for table creation
+
 engine_url = DATABASE_URL.replace("+asyncpg", "")
 if "postgresql://" in engine_url:
-    # psycopg2 is the default sync driver
     pass
 elif "mysql" in engine_url:
     engine_url = engine_url.replace("+asyncmy", "+pymysql")
@@ -60,7 +54,6 @@ except Exception as e:
     print("Please ensure your database is running and DATABASE_URL is correct.")
 
 
-# --- Lifespan Event Handler ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -78,10 +71,8 @@ async def lifespan(app: FastAPI):
         print("Database connection closed.")
 
 
-# --- FastAPI Application ---
 app = FastAPI(lifespan=lifespan)
 
-# CORS Middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://localhost:9000"],
@@ -91,7 +82,6 @@ app.add_middleware(
 )
 
 
-# --- API Endpoints ---
 @app.post("/upload")
 async def upload_file(file: UploadFile = File(...)):
     """
@@ -104,11 +94,9 @@ async def upload_file(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="No file provided")
 
     try:
-        # Read the new file's content and name ONCE
         content = await file.read()
         filename = file.filename
 
-        # 1. Check if a file already exists in the table.
         select_query = files_table.select().limit(1)
         existing_file = await database.fetch_one(select_query)
 
@@ -116,7 +104,6 @@ async def upload_file(file: UploadFile = File(...)):
         file_id: int
 
         if existing_file:
-            # 2a. If a file exists, DELETE its old vectors from Pinecone
             print(
                 f"Existing file found (ID: {existing_file['id']}). Deleting old vectors..."
             )
@@ -124,9 +111,7 @@ async def upload_file(file: UploadFile = File(...)):
                 await delete_vectors(file_id=str(existing_file["id"]))
             except Exception as e:
                 print(f"Warning: Could not delete old vectors: {e}")
-                # Continue anyway, as we are replacing the file
 
-            # 2b. UPDATE the file in PostgreSQL
             print(f"Updating file in database...")
             update_query = (
                 files_table.update()
@@ -138,37 +123,31 @@ async def upload_file(file: UploadFile = File(...)):
             message = f"File '{filename}' successfully replaced the previous file."
 
         else:
-            # 3. If no file exists, INSERT a new one into PostgreSQL
             print("No existing file found. Creating new record...")
             insert_query = files_table.insert().values(filename=filename, data=content)
             file_id = await database.execute(insert_query)
             message = f"File '{filename}' successfully uploaded."
 
-        # 4. INGEST the new file's vectors into Pinecone
         print(f"Starting vector ingestion for file_id: {file_id}...")
         try:
             await ingest_document(
-                file_content=content,  # <-- Use the "pass-the-bytes" method
+                file_content=content,
                 file_id=str(file_id),
                 filename=filename,
             )
             print(f"Successfully ingested vectors for file_id: {file_id}")
         except Exception as e:
-            # If ingestion fails, the file is in the DB but Pinecone is out of sync.
-            # This is a critical error.
             raise HTTPException(
                 status_code=500,
                 detail=f"File saved to DB, but Pinecone ingestion failed: {str(e)}",
             )
 
-        # 5. Return the success response
         return {"message": message, "file_id": file_id, "filename": filename}
 
     except Exception as e:
-        # Catch any other unexpected errors
         print(f"An error occurred during upload: {e}")
         if isinstance(e, HTTPException):
-            raise  # Re-raise HTTPException if it's one we threw
+            raise
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
 
@@ -211,19 +190,16 @@ async def delete_file(file_id: int):
     from Pinecone.
     """
     try:
-        # 1. Check if file exists in PostgreSQL
         query = files_table.select().where(files_table.c.id == file_id)
         result = await database.fetch_one(query)
         if not result:
             raise HTTPException(status_code=404, detail="File not found in database")
 
-        # 2. Delete file from PostgreSQL
         print(f"Deleting file {file_id} from PostgreSQL...")
         delete_query = files_table.delete().where(files_table.c.id == file_id)
         await database.execute(delete_query)
         print("Deleted from PostgreSQL.")
 
-        # 3. Delete vectors from Pinecone
         print(f"Deleting vectors for file_id {file_id} from Pinecone...")
         await delete_vectors(file_id=str(file_id))
         print("Deleted vectors from Pinecone.")
@@ -249,10 +225,8 @@ async def get_current_file():
         result = await database.fetch_one(query)
 
         if result:
-            # A file exists, return its name and ID
             return {"filename": result["filename"], "file_id": result["id"]}
         else:
-            # No file in the database
             return {"filename": None, "file_id": None}
 
     except Exception as e:
@@ -275,12 +249,10 @@ async def process_query(request: QueryRequest = Body(...)):
         print(f"Processing query: '{request.query}' for file_id: {request.file_id}")
         file_id_str = str(request.file_id) if request.file_id is not None else None
 
-        # 1. Get the generator from our retrieval logic
         answer_generator = get_streaming_answer(
             query=request.query, file_id=file_id_str
         )
 
-        # 2. Return a StreamingResponse that yields from the generator
         return StreamingResponse(answer_generator, media_type="text/event-stream")
 
     except Exception as e:
